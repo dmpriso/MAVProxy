@@ -1,0 +1,53 @@
+description: >
+  Support for the Saitek X52 Flight Control System.
+match:
+  - Saitek Saitek X52 Flight Control System
+controls:
+  # throttle
+  - channel: 1
+    type: axis
+    id: 2
+    invert: true
+  # aileron
+  - channel: 2
+    type: axis
+    id: 0
+  # elevator
+  - channel: 3
+    type: axis
+    id: 1
+    invert: true
+  - channel: 4
+    type: axis
+    id: 5
+
+  # One may use the wheel on the throttle control for servo pan with fine control
+  - channel: 8
+    type: axis
+    id: 4
+
+  # This maps the T1-T5 buttons onto channel 5, providing 6 different flight modes
+  # On this joystick, the buttons can be lifted (e.g. T1) and clicked (T2)
+  # We do assign different but nearby PWM values, in case someone wants 
+  # to use the "button up" modes
+  - channel: 5
+    type: multibutton
+    buttons:
+      # T1
+      - id: 8
+        value: 1150
+      # T2
+      - id: 9
+        value: 1320
+      # T3
+      - id: 10
+        value: 1410
+      # T4
+      - id: 11
+        value: 1540
+      # T5
+      - id: 12
+        value: 1680
+      # T6
+      - id: 13
+        value: 1800
