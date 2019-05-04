@@ -11,6 +11,33 @@ def sign(x):
 def avg(list):
     return sum(list) / len(list)
 
+def angleDiff360(fromAngle, toAngle):
+    '''Calculates the angle between fromAngle and toAngle, taking rotation (wrap-around after 360) into account.'''
+    diff = float(toAngle) - float(fromAngle)
+    if abs(diff) <= 180.0:
+        return diff
+    # let's assume 350 ... 10
+    return angleDiff360(fromAngle + 360.0 * float(sign(diff)), toAngle)
+
+class PwmHelper:
+    def __init__(self, axis, degrees):
+        self.axis = axis
+        self.set_degrees(degrees)
+
+    def set_degrees(self, degrees):
+        self.degrees = degrees
+        self.pwm = self.axis._degrees_to_pwm(self.degrees)
+
+    def rotate360(self, direction):
+        self.set_degrees(self.degrees + 360.0 * float(self.axis._direction) * float(direction))
+
+    def is_too_low(self):
+        return self.pwm < self.axis._min_pwm
+
+    def is_too_high(self):
+        return self.pwm > self.axis._max_pwm
+
+
 class AxisCalibration:
     def __init__(self):
         self.clear()
@@ -80,40 +107,34 @@ class AxisCalibration:
         positions = {}
         diffs = []
         last_pwm = None
-        offset = 0.0
 
         for pwm in sorted(self._positions.keys()):
             if last_pwm == None:
                 last_pwm = pwm
-                positions[last_pwm] = self._positions[last_pwm]
+                last_degrees = self._positions[last_pwm]
+                positions[last_pwm] = last_degrees
                 continue
 
-            diff_pwm = pwm - last_pwm
             degrees = self._positions[pwm]
-            diff_degrees = degrees - self._positions[last_pwm]
+
+            diff_pwm = pwm - last_pwm
+            diff_degrees = angleDiff360(last_degrees, degrees)
+            assert abs(diff_degrees) <= 180.0
+
+            degrees = last_degrees + diff_degrees
 
             if (abs(diff_degrees) <= 0.1):
                 self._calib_status = 'Data points must be apart by at least 0.1 degree and at most 180 degrees'
                 return False
             degrees_direction = sign(diff_degrees)
 
-            # for correct calibration and estimation we need data points with less than 180 deg between them
-            if (abs(diff_degrees) < 180.0):
-                if self._set_direction(degrees_direction) == False:
-                    return False
-            else:
-                if self._set_direction(-degrees_direction) == False:
-                    return False
-                # we got a wrap-around here, so add a full circle
-                offset += 360.0 * -degrees_direction
-
-            degrees += offset
-            diff_degrees = degrees - self._positions[last_pwm]
+            self._set_direction(degrees_direction)
 
             positions[pwm] = degrees
             diffs.append((diff_pwm, diff_degrees))
 
             last_pwm = pwm
+            last_degrees = degrees
 
         self._positions = positions
         self._diffs = diffs
@@ -132,6 +153,7 @@ class AxisCalibration:
     def _calc_factor_and_offset(self):
         factors = [diff_pwm / diff_degrees for (diff_pwm, diff_degrees) in self._diffs]
         self._factor = avg(factors)
+        
         offsets = [pwm - self._positions[pwm] * self._factor for pwm in self._positions]
         self._offset = avg(offsets)
 
@@ -159,18 +181,31 @@ class AxisCalibration:
         if self._is_calibrated == False:
             raise CalibrationError('Not calibrated yet')
 
-        while degrees > self._min_degrees + 360.0:
-            degrees -= 360.0
-        
+        helper = PwmHelper(self, degrees)
+        while helper.is_too_low() == False:
+            helper.rotate360(-1)
+
+        while helper.is_too_low() == True:
+            helper.rotate360(1)
+
         positions = []
-        while degrees <= self._max_degrees:
-            positions.append(self._degrees_to_pwm(degrees))
-            degrees += 360.0
+        while helper.is_too_high() == False:
+            positions.append(helper.pwm)
+            helper.rotate360(1)
 
         return positions
         
         
 if __name__ == '__main__':
+    diff = angleDiff360(10, 20)
+    assert diff == 10
+    diff = angleDiff360(20, 10)
+    assert diff == -10
+    diff = angleDiff360(10, 350)
+    assert diff == -20
+    diff = angleDiff360(350, 10)
+    assert diff == 20
+
     calib = AxisCalibration()
     # very simple test case
     calib.add_calibration_point(0, 1000)
