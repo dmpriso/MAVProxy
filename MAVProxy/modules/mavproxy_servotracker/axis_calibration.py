@@ -65,12 +65,10 @@ class AxisCalibration:
     def set_min_pwm(self, pwm):
         '''Sets the minimum PWM value where the tracker may slew to'''
         self._min_pwm = pwm
-        self.calc_calibration()
 
     def set_max_pwm(self, pwm):
         '''Sets the maximum PWM value where the tracker may slew to'''
         self._max_pwm = pwm
-        self.calc_calibration()
 
     def is_calibrated(self):
         return self._is_calibrated
@@ -107,6 +105,9 @@ class AxisCalibration:
         positions = {}
         diffs = []
         last_pwm = None
+
+        if len(self._positions) <= 1:
+            return False
 
         for pwm in sorted(self._positions.keys()):
             if last_pwm == None:
@@ -157,6 +158,41 @@ class AxisCalibration:
         offsets = [pwm - self._positions[pwm] * self._factor for pwm in self._positions]
         self._offset = avg(offsets)
 
+    def _get_calibration_properties(self):
+        return {
+            'Degrees->PWM Factor': self._factor,
+            'Reverse': self._factor < 0,
+            'PWM offset': self._offset,
+            'Minimum PWM': self._min_pwm,
+            'Maximum PWM': self._max_pwm,
+            'Minimum degrees': self._min_degrees,
+            'Maximum degrees': self._max_degrees,
+            'Total movable angle: ': abs(self._max_degrees - self._min_degrees),
+            '# of positions': len(self._positions)
+        }
+
+    def _get_calibration_point_error(self, pwm):
+        degrees = self._positions[pwm]
+        calculated_degrees = self._pwm_to_degrees(pwm)
+        diff = angleDiff360(degrees, calculated_degrees)
+        return diff
+
+    def _get_calibration_point_description(self, pwm):
+        degrees = self._positions[pwm]
+        return f'{pwm}->{degrees} Error: {self._get_calibration_point_error(pwm):9.2f} degrees'
+
+    def get_calibration_details(self):
+        lines = \
+            [ 'Calibration properties:' ] + \
+            [ '{0:20} {1}'.format(key, value) for (key, value) in self._get_calibration_properties().items() ] + \
+            [ 'Calibration points:' ] + \
+            [ f'{self._get_calibration_point_description(pwm)}' for pwm in self._positions ]
+        return '\n'.join(lines) + '\n'
+
+    def get_calibration_warnings(self):
+        errors = [ (pwm, degrees, self._get_calibration_point_error(pwm)) for (pwm, degrees) in self._positions.items() ]
+        filtered = [ f'Warning: Error of {err} at calibration point {pwm}->{degrees}' for (pwm, degrees, err) in errors if abs(err) > 20 ]
+        return '\n'.join(filtered)
 
     def calc_calibration(self):
         '''Performs the actual calibration after data points have been added.'''
@@ -169,7 +205,11 @@ class AxisCalibration:
         self._calc_factor_and_offset()
         self._set_minmax()
 
-        self._calib_status = 'Calibrated'
+        self._calib_status = f'Calibrated.'
+        warnings = self.get_calibration_warnings()
+        if warnings is not None and not warnings == '':
+            self._calib_status = self._calib_status + '\n' + warnings
+
         self._is_calibrated = True
 
     def degrees_to_pwm_positions(self, degrees):

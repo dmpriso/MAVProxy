@@ -1,5 +1,5 @@
 from serial import Serial
-from servo_controller import ServoController
+from MAVProxy.modules.mavproxy_servotracker.servo_controller import ServoController
 
 def get_value_bytes(value):
     '''Returns value encoded as two bytes with only 7 bits set.'''

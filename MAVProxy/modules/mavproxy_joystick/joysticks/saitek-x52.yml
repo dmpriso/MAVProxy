@@ -16,7 +16,6 @@ controls:
   - channel: 3
     type: axis
     id: 1
-    invert: true
   - channel: 4
     type: axis
     id: 5
