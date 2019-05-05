@@ -286,6 +286,17 @@ class ServoTrackerModule(mp_module.MPModule):
         elif len(args) >= 1:
             self.subcmd_servotracker(args[0], args[1:])
 
+    def slew_to(self, pan, tilt):
+        '''Programmable slew for other modules'''
+        if self.tracking_antenna is None or self.tracking_antenna.is_calibrated() == False:
+            return False
+
+        self.tracking_antenna.set_pan_degrees(pan)
+        self.tracking_antenna.set_tilt_degrees(min(max(tilt, 0), 90))
+
+        return True
+        
+
 def init(mpstate):
     '''initialise module'''
     return ServoTrackerModule(mpstate)

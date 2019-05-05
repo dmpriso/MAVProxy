@@ -368,7 +368,7 @@ class LinkModule(mp_module.MPModule):
             int(self.settings.altreadout)):
             self.last_altitude_announce = altitude_converted
             rounded_alt = int(self.settings.altreadout) * ((self.settings.altreadout/2 + int(altitude_converted)) / int(self.settings.altreadout))
-            self.say("height %u" % rounded_alt, priority='notification')
+            #self.say("height %u" % rounded_alt, priority='notification')
 
 
     def master_msg_handling(self, m, master):

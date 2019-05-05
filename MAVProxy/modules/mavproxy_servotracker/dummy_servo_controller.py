@@ -1,13 +1,25 @@
 from MAVProxy.modules.mavproxy_servotracker.servo_controller import ServoController
+import time
 
 class DummyServoController(ServoController):
+    def __init__(self):
+        self._pwms = {}
+        self.last_output = 0
+
     def close(self):
         '''Performs cleanup.'''
         print('DummyServoController closed.')
+        
+    def print_position(self):
+        formatted = ' '.join([f'Channel[{chnl}]={pwm:9.1f}' for (chnl, pwm) in self._pwms.items()])
+        print(f'DummyServoController {formatted}')
+        self.last_output = time.time()
     
     def set_target(self, channel_number, pwm):
         '''Sets the target position of the given channel to the PWM number'''
-        print(f'DummyServoController channel {channel_number} target pwm {pwm}')
+        self._pwms[channel_number] = pwm
+        if (time.time() - self.last_output) > 10:
+            self.print_position()
 
     def set_speed(self, channel_number, us_per_second):
         '''Limits the maximum position change / speed of the given channel.'''
