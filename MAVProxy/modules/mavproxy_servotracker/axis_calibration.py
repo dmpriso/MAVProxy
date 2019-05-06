@@ -1,3 +1,5 @@
+from MAVProxy.modules.mavproxy_servotracker.calc_tools import sign, avg, angle_diff, normalize_angle
+
 class CalibrationError(Exception):
     def __init__(self, descr):
         self.descr = descr
@@ -5,41 +7,44 @@ class CalibrationError(Exception):
     def __str__(self):
         return f'Invalid calibration: {self.descr}'
 
-def sign(x):
-    return (x > 0) - (x < 0)
-
-def avg(list):
-    return sum(list) / len(list)
-
-def angleDiff360(fromAngle, toAngle):
-    '''Calculates the angle between fromAngle and toAngle, taking rotation (wrap-around after 360) into account.'''
-    diff = float(toAngle) - float(fromAngle)
-    if abs(diff) <= 180.0:
-        return diff
-    # let's assume 350 ... 10
-    return angleDiff360(fromAngle + 360.0 * float(sign(diff)), toAngle)
-
 class PwmHelper:
     def __init__(self, axis, degrees):
-        self.axis = axis
+        self._axis = axis
         self.set_degrees(degrees)
+        self._nearest_in_range = None
+        self._smallest_diff = None
 
     def set_degrees(self, degrees):
         self.degrees = degrees
-        self.pwm = self.axis._degrees_to_pwm(self.degrees)
+        self.pwm = self._axis._degrees_to_pwm(self.degrees)
 
     def rotate360(self, direction):
-        self.set_degrees(self.degrees + 360.0 * float(self.axis._direction) * float(direction))
+        self.set_degrees(self.degrees + 360.0 * float(self._axis._direction) * float(direction))
+
+    def _try_set_nearest(self, limit):
+        diff = abs(self.pwm - limit)
+        if self._smallest_diff is None or self._smallest_diff > diff:
+            self._smallest_diff = diff
+            self._nearest_in_range = limit
 
     def is_too_low(self):
-        return self.pwm < self.axis._min_pwm
-
+        if self.pwm < self._axis._min_pwm:
+            self._try_set_nearest(self._axis._min_pwm)
+            return True
+        return False
+        
     def is_too_high(self):
-        return self.pwm > self.axis._max_pwm
+        if self.pwm > self._axis._max_pwm:
+            self._try_set_nearest(self._axis._max_pwm)
+            return True
+        return False
 
+    def get_nearest_in_range(self):
+        return self._nearest_in_range
 
 class AxisCalibration:
-    def __init__(self):
+    def __init__(self, desired_range):
+        self._desired_range = desired_range
         self.clear()
 
     def add_calibration_point(self, degrees, pwm):
@@ -60,7 +65,7 @@ class AxisCalibration:
         self._is_calibrated = False
         self._min_pwm = None
         self._max_pwm = None
-        self._calib_status = ''
+        self._calib_status = 'Uncalibrated'
 
     def set_min_pwm(self, pwm):
         '''Sets the minimum PWM value where the tracker may slew to'''
@@ -95,6 +100,16 @@ class AxisCalibration:
             return False
 
         return True
+
+    def _normalize_positions(self):
+        '''Tries to arrange the positions in the normal 0...360 range, even if the tracker direction is reverse.'''
+        min_degrees = min(self._positions.values())
+        max_degrees = max(self._positions.values())
+        mid = avg([min_degrees, max_degrees])
+        # try to shift them to a normal range
+        shift = normalize_angle(mid) - mid
+        self._positions = {pwm : (degrees + shift) for (pwm, degrees) in self._positions.items()}
+
     
     def _prepare_positions_and_calc_diffs(self):
         '''First step of calibration calculation. Sorts the differences between the stored positions'''
@@ -119,7 +134,7 @@ class AxisCalibration:
             degrees = self._positions[pwm]
 
             diff_pwm = pwm - last_pwm
-            diff_degrees = angleDiff360(last_degrees, degrees)
+            diff_degrees = angle_diff(last_degrees, degrees)
             assert abs(diff_degrees) <= 180.0
 
             degrees = last_degrees + diff_degrees
@@ -143,10 +158,11 @@ class AxisCalibration:
         return True
 
     def _set_minmax(self):
-        if self._min_pwm == None:
-            self._min_pwm = min(self._positions.keys())
-        if self._max_pwm == None:
-            self._max_pwm = max(self._positions.keys())
+        filter = lambda l: [i for i in l if i is not None]
+
+        pwms = [key for key in self._positions]
+        self._min_pwm = min(pwms + filter([self._min_pwm]))
+        self._max_pwm = max(pwms + filter([self._max_pwm]))
 
         self._min_degrees = self._pwm_to_degrees(self._min_pwm)
         self._max_degrees = self._pwm_to_degrees(self._max_pwm)
@@ -167,31 +183,36 @@ class AxisCalibration:
             'Maximum PWM': self._max_pwm,
             'Minimum degrees': self._min_degrees,
             'Maximum degrees': self._max_degrees,
-            'Total movable angle: ': abs(self._max_degrees - self._min_degrees),
-            '# of positions': len(self._positions)
+            'Total movable angle': abs(self._max_degrees - self._min_degrees),
+            'Calibration points': len(self._positions)
         }
 
     def _get_calibration_point_error(self, pwm):
         degrees = self._positions[pwm]
         calculated_degrees = self._pwm_to_degrees(pwm)
-        diff = angleDiff360(degrees, calculated_degrees)
+        diff = angle_diff(degrees, calculated_degrees)
         return diff
 
-    def _get_calibration_point_description(self, pwm):
-        degrees = self._positions[pwm]
-        return f'{pwm}->{degrees} Error: {self._get_calibration_point_error(pwm):9.2f} degrees'
+    def _get_calibration_point_descriptions(self):
+        return {f'{pwm}->{degrees} error': f'{self._get_calibration_point_error(pwm):0.2f} deg' \
+            for (pwm, degrees) in self._positions.items()}
+
 
     def get_calibration_details(self):
         lines = \
             [ 'Calibration properties:' ] + \
             [ '{0:20} {1}'.format(key, value) for (key, value) in self._get_calibration_properties().items() ] + \
-            [ 'Calibration points:' ] + \
-            [ f'{self._get_calibration_point_description(pwm)}' for pwm in self._positions ]
+            [ '{0:20} {1}'.format(key, value) for (key, value) in self._get_calibration_point_descriptions().items() ]
         return '\n'.join(lines) + '\n'
 
     def get_calibration_warnings(self):
         errors = [ (pwm, degrees, self._get_calibration_point_error(pwm)) for (pwm, degrees) in self._positions.items() ]
-        filtered = [ f'Warning: Error of {err} at calibration point {pwm}->{degrees}' for (pwm, degrees, err) in errors if abs(err) > 20 ]
+        filtered = [ f'WARNING: Error of {err} at calibration point {pwm}->{degrees}' for (pwm, degrees, err) in errors if abs(err) > 20 ]
+        
+        range = abs(self._max_degrees - self._min_degrees)
+        if self._desired_range is not None and range < self._desired_range:
+            filtered = filtered + [f'WARNING: Calibrated range of axis ({range} degrees) is smaller than desired ({self._desired_range} degrees)']
+        
         return '\n'.join(filtered)
 
     def calc_calibration(self):
@@ -202,6 +223,7 @@ class AxisCalibration:
         if self._prepare_positions_and_calc_diffs() == False:
             return
         
+        self._normalize_positions()
         self._calc_factor_and_offset()
         self._set_minmax()
 
@@ -233,20 +255,25 @@ class AxisCalibration:
             positions.append(helper.pwm)
             helper.rotate360(1)
 
+        if len(positions) == 0:
+            # if no position could be found, return the nearest miss
+            # this will be the best position "in range"
+            return [helper.get_nearest_in_range()]
+
         return positions
         
         
 if __name__ == '__main__':
-    diff = angleDiff360(10, 20)
+    diff = angle_diff(10, 20)
     assert diff == 10
-    diff = angleDiff360(20, 10)
+    diff = angle_diff(20, 10)
     assert diff == -10
-    diff = angleDiff360(10, 350)
+    diff = angle_diff(10, 350)
     assert diff == -20
-    diff = angleDiff360(350, 10)
+    diff = angle_diff(350, 10)
     assert diff == 20
 
-    calib = AxisCalibration()
+    calib = AxisCalibration(360)
     # very simple test case
     calib.add_calibration_point(0, 1000)
     calib.add_calibration_point(90, 1250)

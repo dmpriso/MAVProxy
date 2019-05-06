@@ -9,6 +9,7 @@ from MAVProxy.modules.lib import mp_module
 from MAVProxy.modules.mavproxy_servotracker.maestro_servo_controller import MaestroServoController
 from MAVProxy.modules.mavproxy_servotracker.dummy_servo_controller import DummyServoController
 from MAVProxy.modules.mavproxy_servotracker.servo_tracking_antenna import ServoTrackingAntenna
+from MAVProxy.modules.mavproxy_servotracker.calc_tools import normalize_angle
 
 def servoid_in_range(id):
     return id >= 0 and id <= 5
@@ -87,6 +88,7 @@ class ServoTrackerModule(mp_module.MPModule):
         print('             servotracker calib pan min 1000')
         print('             (Learns the pwm value 1000 as lowest possible pwm value)')
         print('')
+        print('details      Returns details of the axis calibration. Useful for debugging purposes.')
         print('tune         Tracker speed/acceleration tuning. Syntax:')
         print('             tune <pan|tilt> <speed|acceleration> VALUE')
         print('')
@@ -132,13 +134,13 @@ class ServoTrackerModule(mp_module.MPModule):
         if tracker_type == 'maestro':
             self.controller = MaestroServoController(tty_iface)
         elif tracker_type == 'dummy':
-            self.controller = DummyServoController()
+            self.controller = DummyServoController(tty_iface == 'immediate')
         else:
             print('Unknown tracker type. Supported tracker types are "maestro", "dummy"')
             return True
 
         self.tracking_antenna = ServoTrackingAntenna(self.controller)
-        self.tracker_info = f'Pololu {tracker_type} controller. Pan servo channel={pan_servo_id}, tilt servo channel={tilt_servo_id}'
+        self.tracker_info = f'Servo controller type={tracker_type}. Pan servo channel={pan_servo_id}, tilt servo channel={tilt_servo_id}'
         if not tty_iface == None:
             self.tracker_info = self.tracker_info + f'. Serial interface={tty_iface}'
 
@@ -176,13 +178,12 @@ class ServoTrackerModule(mp_module.MPModule):
             print('Tracker not calibrated, run calibration first')
             return True
 
-        axis = self.get_axis(axis)
-        if axis is None:
+        if axis == 'pan':
+            self._slew_pan_to(degrees)
+        elif axis == 'tilt':
+            self._slew_tilt_to(degrees)
+        else:
             return False
-        degrees = int(degrees)
-        if degrees < 0 or degrees > 360 or (axis == 'tilt' and degrees > 90):
-            return False
-        axis.set_degrees(degrees)
 
         return True
 
@@ -227,7 +228,11 @@ class ServoTrackerModule(mp_module.MPModule):
 
         print(f'Calculating ...')
         calib.calc_calibration()
-        print(f'{axis_name.capitalize()} axis {"NOT" if calib.is_calibrated() == False else ""} CALIBRATED')
+        print(f'{axis_name.capitalize()} axis {"NOT " if calib.is_calibrated() == False else ""}CALIBRATED')
+        if (calib.is_calibrated()):
+            warnings = calib.get_calibration_warnings()
+            if warnings:
+                print(warnings)
 
         return True
 
@@ -286,13 +291,25 @@ class ServoTrackerModule(mp_module.MPModule):
         elif len(args) >= 1:
             self.subcmd_servotracker(args[0], args[1:])
 
+    def _slew_pan_to(self, pan):
+        self.tracking_antenna.set_pan_degrees(normalize_angle(pan))
+
+    def _slew_tilt_to(self, tilt):
+        # we limit tilt to useful numbers
+        tilt = normalize_angle(tilt)
+        if tilt > 180:
+            tilt = max(tilt, 315.0) # this equals -45deg
+        else:
+            tilt = min(tilt, 90.0)
+        self.tracking_antenna.set_tilt_degrees(tilt)
+
     def slew_to(self, pan, tilt):
-        '''Programmable slew for other modules'''
         if self.tracking_antenna is None or self.tracking_antenna.is_calibrated() == False:
             return False
 
-        self.tracking_antenna.set_pan_degrees(pan)
-        self.tracking_antenna.set_tilt_degrees(min(max(tilt, 0), 90))
+        '''Programmable slew for other modules'''
+        self._slew_pan_to(pan)
+        self._slew_tilt_to(tilt)
 
         return True
         

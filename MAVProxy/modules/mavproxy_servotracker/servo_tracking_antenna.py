@@ -3,10 +3,10 @@ from MAVProxy.modules.mavproxy_servotracker.servo_controller import ServoControl
 from MAVProxy.modules.mavproxy_servotracker.axis_calibration import AxisCalibration
 
 class ServoTrackingAxis:
-    def __init__(self, controller, servo_id):
+    def __init__(self, controller, servo_id, desired_range):
         self._controller = controller
         self._servo_id = servo_id
-        self._calibration = AxisCalibration()
+        self._calibration = AxisCalibration(desired_range)
         self._last_pwm = None
 
     def set_degrees(self, degrees):
@@ -40,8 +40,8 @@ class ServoTrackingAxis:
 class ServoTrackingAntenna:
     def __init__(self, controller):
         self._controller = controller
-        self._pan = ServoTrackingAxis(controller, 0)
-        self._tilt = ServoTrackingAxis(controller, 1)
+        self._pan = ServoTrackingAxis(controller, 0, 360.0)
+        self._tilt = ServoTrackingAxis(controller, 1, 90.0)
 
     def is_calibrated(self):
         return self._pan.get_calibration().is_calibrated() and self._tilt.get_calibration().is_calibrated()
